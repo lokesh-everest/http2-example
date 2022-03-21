@@ -1,51 +1,53 @@
-const http2 = require('http2')
+const http2 = require('http2');
+const fs = require('fs');
+const path = require('path');
+const mime = require('mime-types');
 
-const server = http2.createServer()
+
+const {
+    HTTP2_HEADER_PATH,
+    HTTP2_HEADER_METHOD,
+    HTTP_STATUS_NOT_FOUND,
+    HTTP_STATUS_INTERNAL_SERVER_ERROR
+} = http2.constants;
+
+const options = {
+    key: fs.readFileSync('./selfsigned.key'),
+    cert: fs.readFileSync('./selfsigned.crt')
+}
+const server = http2.createSecureServer(options)
 
 server.on('error', (err) => console.error(err))
 
-const helloWorldHandler = (stream, headers) => {
-    console.log({headers})
-    stream.respond({
-        ':status': 200
-    })
-    stream.end('Hello World')
+
+function respondToStreamError(err, stream) {
+    console.log(err);
+    if (err.code === 'ENOENT') {
+        stream.respond({":status": HTTP_STATUS_NOT_FOUND});
+    } else {
+        stream.respond({":status": HTTP_STATUS_INTERNAL_SERVER_ERROR});
+    }
+    stream.end();
 }
 
-const pingHandler = (stream, headers) => {
-    console.log({headers})
-    stream.respond({
-        ':status': 200
-    })
-    stream.end('pong')
-}
+const staticFileHandler = (stream, headers) => {
+    const reqPath = headers[HTTP2_HEADER_PATH];
+    const fullPath = path.resolve('./server/public' + reqPath);
+    const responseMimeType = mime.lookup(fullPath);
 
-const notFoundHandler = (stream, headers) => {
-    stream.respond({
-        'content-type': 'text/plain; charset=utf-8',
-        ':status': 200
-    })
-    stream.end('path not found')
+    stream.respondWithFile(fullPath, {
+        'content-type': responseMimeType
+    }, {
+        onError: (err) => respondToStreamError(err, stream)
+    });
 }
 
 const router = (stream, headers) => {
     // first, extract the path and method pseudo headers
-    const path = headers[':path']
-    const method = headers[':method']
-
-    let handler
-    if (path === "/hello-world" && method === 'GET') {
-        handler = helloWorldHandler
-    } else if (path === "/ping" && method == 'GET') {
-        handler = pingHandler
-    } else {
-        handler = notFoundHandler
-    }
-
-    handler(stream, headers)
+    staticFileHandler(stream, headers)
 }
 
 server.on('stream', router)
 
-// start the server on port 8000
-server.listen(8000)
+// start the server on secure port 443
+server.listen(443)
